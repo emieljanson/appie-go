@@ -86,6 +86,15 @@ func WithConfigPath(path string) Option {
 	}
 }
 
+// WithBrowserOpener controls how Login presents its local login URL. CLI
+// callers can provide a printer instead of launching the operating-system
+// browser, while library callers keep the existing default behavior.
+func WithBrowserOpener(open func(string)) Option {
+	return func(c *Client) {
+		c.openBrowser = open
+	}
+}
+
 // New creates a new AH API client.
 func New(opts ...Option) *Client {
 	c := &Client{

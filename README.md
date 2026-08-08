@@ -104,6 +104,9 @@ Usage:
 # Login to Albert Heijn (opens browser for OAuth)
 appie login
 
+# Print the local login URL without opening a browser
+appie login --no-browser
+
 # Search products
 appie search "pindakaas"
 appie search --bonus "kaas"           # only bonus products

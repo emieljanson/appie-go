@@ -210,3 +210,37 @@ func TestLoginContextCancel(t *testing.T) {
 		t.Errorf("expected context.Canceled, got %v", err)
 	}
 }
+
+func TestWithBrowserOpenerReceivesLoginURL(t *testing.T) {
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte("ok"))
+	}))
+	defer mock.Close()
+
+	opened := make(chan string, 1)
+	client := New(
+		WithBaseURL(mock.URL),
+		WithBrowserOpener(func(loginURL string) { opened <- loginURL }),
+	)
+	client.loginBaseURL = mock.URL
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() { errCh <- client.Login(ctx) }()
+
+	select {
+	case loginURL := <-opened:
+		if !strings.HasPrefix(loginURL, "http://127.0.0.1:") {
+			t.Fatalf("expected loopback login URL, got %q", loginURL)
+		}
+		cancel()
+	case <-ctx.Done():
+		t.Fatal("browser opener was not called")
+	}
+
+	if err := <-errCh; err != context.Canceled {
+		t.Fatalf("expected context cancellation, got %v", err)
+	}
+}
