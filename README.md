@@ -107,6 +107,9 @@ appie login
 # Print the local login URL without opening a browser
 appie login --no-browser
 
+# Also bind the local helper to a caller-generated capability
+appie login --no-browser --login-nonce "$LOGIN_NONCE"
+
 # Search products
 appie search "pindakaas"
 appie search --bonus "kaas"           # only bonus products

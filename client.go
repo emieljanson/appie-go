@@ -44,6 +44,7 @@ type Client struct {
 	configPath   string
 	loginBaseURL string       // overridable for testing; defaults to "https://login.ah.nl"
 	openBrowser  func(string) // overridable for testing; nil uses default
+	loginNonce   string       // optional capability for the local login helper
 	logger       *log.Logger
 }
 
@@ -92,6 +93,14 @@ func WithConfigPath(path string) Option {
 func WithBrowserOpener(open func(string)) Option {
 	return func(c *Client) {
 		c.openBrowser = open
+	}
+}
+
+// WithLoginNonce restricts the local login helper to one caller-generated
+// capability. The nonce is used only to bootstrap an HttpOnly local cookie.
+func WithLoginNonce(nonce string) Option {
+	return func(c *Client) {
+		c.loginNonce = nonce
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"cmp"
 	"compress/gzip"
 	"context"
+	"crypto/subtle"
 	"fmt"
 	"io"
 	"net"
@@ -21,7 +22,7 @@ const loginSuccessPage = `<!DOCTYPE html>
 <body style="font-family:system-ui;max-width:500px;margin:80px auto;text-align:center">
 <h1>Login successful!</h1>
 <p>You can close this tab.</p>
-<script>setTimeout(function(){window.close()},500)</script>
+<script>history.replaceState({},"","/complete");setTimeout(function(){window.close()},500)</script>
 </body></html>`
 
 // Login performs the full browser-based login flow. It starts a local reverse
@@ -45,7 +46,12 @@ func (c *Client) Login(ctx context.Context) error {
 	mux.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
 		code := r.URL.Query().Get("code")
 		c.logger.Printf("callback received, code length=%d", len(code))
-		codeCh <- code
+		select {
+		case codeCh <- code:
+		default:
+			http.Error(w, "callback already consumed", http.StatusConflict)
+			return
+		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		io.WriteString(w, loginSuccessPage)
 	})
@@ -79,12 +85,15 @@ func (c *Client) Login(ctx context.Context) error {
 	}
 	mux.Handle("/", proxy)
 
-	srv := &http.Server{Handler: mux}
+	srv := &http.Server{Handler: secureLoginHandler(mux, localOrigin, listener.Addr().String(), c.loginNonce)}
 	go srv.Serve(listener)
 	defer srv.Shutdown(ctx)
 
 	loginURL := fmt.Sprintf("%s/login?client_id=%s&response_type=code&redirect_uri=appie://login-exit",
 		localOrigin, c.clientID)
+	if c.loginNonce != "" {
+		loginURL = fmt.Sprintf("%s/login?nonce=%s", localOrigin, url.QueryEscape(c.loginNonce))
+	}
 
 	if c.openBrowser != nil {
 		c.openBrowser(loginURL)
@@ -98,6 +107,53 @@ func (c *Client) Login(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+const loginNonceCookie = "appie_login_nonce"
+
+func secureLoginHandler(next http.Handler, localOrigin, localHost, nonce string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+
+		if r.Host != localHost {
+			http.Error(w, "invalid host", http.StatusMisdirectedRequest)
+			return
+		}
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodPost {
+			w.Header().Set("Allow", "GET, HEAD, POST")
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		if nonce != "" {
+			queryNonce := r.URL.Query().Get("nonce")
+			if queryNonce != "" {
+				if r.Method != http.MethodGet || r.URL.Path != "/login" || len(r.URL.Query()) != 1 || subtle.ConstantTimeCompare([]byte(queryNonce), []byte(nonce)) != 1 {
+					http.Error(w, "invalid login capability", http.StatusForbidden)
+					return
+				}
+				http.SetCookie(w, &http.Cookie{Name: loginNonceCookie, Value: nonce, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: 600})
+				http.Redirect(w, r, "/login", http.StatusSeeOther)
+				return
+			}
+
+			cookie, err := r.Cookie(loginNonceCookie)
+			if err != nil || subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(nonce)) != 1 {
+				http.Error(w, "missing login capability", http.StatusForbidden)
+				return
+			}
+		}
+
+		if r.Method == http.MethodPost && r.Header.Get("Origin") != localOrigin {
+			http.Error(w, "invalid origin", http.StatusForbidden)
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		next.ServeHTTP(w, r)
+	})
 }
 
 func rewriteLoginResponse(resp *http.Response, localOrigin, targetHost string) error {
