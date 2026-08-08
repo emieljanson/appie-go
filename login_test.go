@@ -298,6 +298,20 @@ func TestLoginNonceBootstrapsAnIsolatedLocalSession(t *testing.T) {
 	if bootstrap.StatusCode != http.StatusSeeOther || len(bootstrap.Cookies()) != 1 {
 		t.Fatalf("expected protected bootstrap redirect, got %d", bootstrap.StatusCode)
 	}
+	if !strings.Contains(bootstrap.Header.Get("Content-Security-Policy"), "https://*.hcaptcha.com") {
+		t.Fatal("protected login must allow AH's hCaptcha resources")
+	}
+	redirect, err := url.Parse(bootstrap.Header.Get("Location"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if redirect.Path != "/login" || redirect.Query().Get("client_id") != defaultClientID ||
+		redirect.Query().Get("response_type") != "code" || redirect.Query().Get("redirect_uri") != "appie://login-exit" {
+		t.Fatalf("bootstrap dropped required AH login parameters: %s", redirect)
+	}
+	if redirect.Query().Has("nonce") {
+		t.Fatalf("bootstrap leaked nonce to upstream login: %s", redirect)
+	}
 
 	callback := fmt.Sprintf("http://%s/callback?code=test-code", parsed.Host)
 	callbackRequest, _ := http.NewRequest(http.MethodGet, callback, nil)

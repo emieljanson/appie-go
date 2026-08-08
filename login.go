@@ -40,6 +40,7 @@ func (c *Client) Login(ctx context.Context) error {
 	}
 
 	localOrigin := fmt.Sprintf("http://%s", listener.Addr())
+	loginPath := fmt.Sprintf("/login?client_id=%s&response_type=code&redirect_uri=appie://login-exit", c.clientID)
 	codeCh := make(chan string, 1)
 
 	mux := http.NewServeMux()
@@ -85,12 +86,11 @@ func (c *Client) Login(ctx context.Context) error {
 	}
 	mux.Handle("/", proxy)
 
-	srv := &http.Server{Handler: secureLoginHandler(mux, localOrigin, listener.Addr().String(), c.loginNonce)}
+	srv := &http.Server{Handler: secureLoginHandler(mux, localOrigin, listener.Addr().String(), c.loginNonce, loginPath)}
 	go srv.Serve(listener)
 	defer srv.Shutdown(ctx)
 
-	loginURL := fmt.Sprintf("%s/login?client_id=%s&response_type=code&redirect_uri=appie://login-exit",
-		localOrigin, c.clientID)
+	loginURL := localOrigin + loginPath
 	if c.loginNonce != "" {
 		loginURL = fmt.Sprintf("%s/login?nonce=%s", localOrigin, url.QueryEscape(c.loginNonce))
 	}
@@ -111,12 +111,12 @@ func (c *Client) Login(ctx context.Context) error {
 
 const loginNonceCookie = "appie_login_nonce"
 
-func secureLoginHandler(next http.Handler, localOrigin, localHost, nonce string) http.Handler {
+func secureLoginHandler(next http.Handler, localOrigin, localHost, nonce, loginPath string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("X-Frame-Options", "DENY")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data: https://hcaptcha.com https://*.hcaptcha.com; style-src 'self' 'unsafe-inline' https://hcaptcha.com https://*.hcaptcha.com; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://hcaptcha.com https://*.hcaptcha.com; connect-src 'self' https://hcaptcha.com https://*.hcaptcha.com; frame-src https://hcaptcha.com https://*.hcaptcha.com; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 
 		if r.Host != localHost {
 			http.Error(w, "invalid host", http.StatusMisdirectedRequest)
@@ -136,7 +136,7 @@ func secureLoginHandler(next http.Handler, localOrigin, localHost, nonce string)
 					return
 				}
 				http.SetCookie(w, &http.Cookie{Name: loginNonceCookie, Value: nonce, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: 600})
-				http.Redirect(w, r, "/login", http.StatusSeeOther)
+				http.Redirect(w, r, loginPath, http.StatusSeeOther)
 				return
 			}
 
