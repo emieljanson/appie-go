@@ -244,3 +244,70 @@ func TestWithBrowserOpenerReceivesLoginURL(t *testing.T) {
 		t.Fatalf("expected context cancellation, got %v", err)
 	}
 }
+
+func TestLoginNonceBootstrapsAnIsolatedLocalSession(t *testing.T) {
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/mobile-auth/v1/auth/token":
+			json.NewEncoder(w).Encode(token{
+				AccessToken: "access", RefreshToken: "refresh", ExpiresIn: 60,
+			})
+		default:
+			w.Header().Set("Content-Type", "text/html")
+			w.Write([]byte("ok"))
+		}
+	}))
+	defer mock.Close()
+
+	opened := make(chan string, 1)
+	client := New(
+		WithBaseURL(mock.URL),
+		WithBrowserOpener(func(loginURL string) { opened <- loginURL }),
+		WithLoginNonce("attempt-nonce"),
+	)
+	client.loginBaseURL = mock.URL
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- client.Login(context.Background()) }()
+	loginURL := <-opened
+	parsed, err := url.Parse(loginURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Path != "/login" || parsed.Query().Get("nonce") != "attempt-nonce" {
+		t.Fatalf("unexpected protected login URL: %s", loginURL)
+	}
+
+	transport := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	badRequest, _ := http.NewRequest(http.MethodGet, loginURL, nil)
+	badRequest.Host = "malicious.local"
+	badResponse, err := transport.Do(badRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	badResponse.Body.Close()
+	if badResponse.StatusCode != http.StatusMisdirectedRequest {
+		t.Fatalf("expected hostile Host to be rejected, got %d", badResponse.StatusCode)
+	}
+
+	bootstrap, err := transport.Get(loginURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bootstrap.Body.Close()
+	if bootstrap.StatusCode != http.StatusSeeOther || len(bootstrap.Cookies()) != 1 {
+		t.Fatalf("expected protected bootstrap redirect, got %d", bootstrap.StatusCode)
+	}
+
+	callback := fmt.Sprintf("http://%s/callback?code=test-code", parsed.Host)
+	callbackRequest, _ := http.NewRequest(http.MethodGet, callback, nil)
+	callbackRequest.AddCookie(bootstrap.Cookies()[0])
+	callbackResponse, err := http.DefaultClient.Do(callbackRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	callbackResponse.Body.Close()
+	if err := <-errCh; err != nil {
+		t.Fatal(err)
+	}
+}

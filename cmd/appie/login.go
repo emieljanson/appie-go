@@ -11,7 +11,8 @@ import (
 )
 
 type loginCommand struct {
-	NoBrowser bool `long:"no-browser" description:"Print the local login URL without opening a browser"`
+	NoBrowser  bool   `long:"no-browser" description:"Print the local login URL without opening a browser"`
+	LoginNonce string `long:"login-nonce" description:"Require a caller-provided nonce for the local login helper"`
 }
 
 func (cmd *loginCommand) Execute(args []string) error {
@@ -26,6 +27,9 @@ func (cmd *loginCommand) Execute(args []string) error {
 		opts = append(opts, appie.WithBrowserOpener(func(loginURL string) {
 			fmt.Println(loginURL)
 		}))
+	}
+	if cmd.LoginNonce != "" {
+		opts = append(opts, appie.WithLoginNonce(cmd.LoginNonce))
 	}
 	client := appie.New(opts...)
 
