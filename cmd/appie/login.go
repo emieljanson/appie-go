@@ -10,7 +10,9 @@ import (
 	appie "github.com/gwillem/appie-go"
 )
 
-type loginCommand struct{}
+type loginCommand struct {
+	NoBrowser bool `long:"no-browser" description:"Print the local login URL without opening a browser"`
+}
 
 func (cmd *loginCommand) Execute(args []string) error {
 	configPath := globalOpts.Config
@@ -19,12 +21,22 @@ func (cmd *loginCommand) Execute(args []string) error {
 		return fmt.Errorf("create config dir: %w", err)
 	}
 
-	client := appie.New(clientOpts()...)
+	opts := clientOpts()
+	if cmd.NoBrowser {
+		opts = append(opts, appie.WithBrowserOpener(func(loginURL string) {
+			fmt.Println(loginURL)
+		}))
+	}
+	client := appie.New(opts...)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
-	fmt.Println("Opening browser for AH login. If it doesn't open, visit:")
+	if cmd.NoBrowser {
+		fmt.Println("AH login URL:")
+	} else {
+		fmt.Println("Opening browser for AH login. If it doesn't open, visit:")
+	}
 
 	if err := client.Login(ctx); err != nil {
 		return fmt.Errorf("login failed: %w", err)
