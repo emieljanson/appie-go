@@ -321,6 +321,81 @@ func TestHostedGatewayRejectsInvalidBoundaries(t *testing.T) {
 	})
 }
 
+func TestHostedGatewayRejectsOversizedRequestBody(t *testing.T) {
+	for index, chunked := range []bool{false, true} {
+		t.Run(map[bool]string{false: "known length", true: "chunked"}[chunked], func(t *testing.T) {
+			fixture := newGatewayFixture(t)
+			client := gatewayClient(t)
+			start := startGatewayAttempt(t, fixture, client, strings.Repeat(string(rune('d'+index)), 32))
+			start.Body.Close()
+
+			req, err := http.NewRequest(
+				http.MethodPost,
+				fixture.server.URL+"/submit",
+				strings.NewReader(strings.Repeat("x", maxGatewayBodyBytes+1)),
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if chunked {
+				req.ContentLength = -1
+				req.TransferEncoding = []string{"chunked"}
+			}
+			req.Header.Set("Origin", fixture.server.URL)
+			resp, err := client.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusRequestEntityTooLarge {
+				t.Fatalf("expected oversized request rejection, got %d", resp.StatusCode)
+			}
+		})
+	}
+}
+
+func TestHostedGatewayRejectsCrossAttemptCapability(t *testing.T) {
+	fixture := newGatewayFixture(t)
+	firstClient := gatewayClient(t)
+	secondClient := gatewayClient(t)
+	firstAttempt := strings.Repeat("e", 32)
+	secondAttempt := strings.Repeat("f", 32)
+
+	first := startGatewayAttempt(t, fixture, firstClient, firstAttempt)
+	first.Body.Close()
+	second := startGatewayAttempt(t, fixture, secondClient, secondAttempt)
+	second.Body.Close()
+
+	var firstCookie *http.Cookie
+	for _, cookie := range firstClient.Jar.Cookies(mustParseURL(t, fixture.server.URL)) {
+		if cookie.Name == hostedAttemptCookie {
+			firstCookie = cookie
+			break
+		}
+	}
+	if firstCookie == nil {
+		t.Fatal("attempt cookie missing")
+	}
+	parts := strings.SplitN(firstCookie.Value, ".", 2)
+	if len(parts) != 2 {
+		t.Fatalf("unexpected attempt cookie shape")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, fixture.server.URL+"/next", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.AddCookie(&http.Cookie{Name: hostedAttemptCookie, Value: secondAttempt + "." + parts[1]})
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected cross-attempt capability rejection, got %d", resp.StatusCode)
+	}
+}
+
 func TestHostedGatewayValidatesProductionOrigins(t *testing.T) {
 	_, err := NewHostedLoginGateway(HostedGatewayConfig{
 		PublicOrigin: "http://gateway.example", AppOrigin: "https://app.example",
