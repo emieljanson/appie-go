@@ -334,6 +334,10 @@ func (g *HostedLoginGateway) handleProxy(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "invalid origin", http.StatusForbidden)
 		return
 	}
+	if r.ContentLength > maxGatewayBodyBytes {
+		http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxGatewayBodyBytes)
 	proxy := &httputil.ReverseProxy{
 		Director: func(req *http.Request) {
@@ -352,7 +356,12 @@ func (g *HostedLoginGateway) handleProxy(w http.ResponseWriter, r *http.Request)
 		ModifyResponse: func(resp *http.Response) error {
 			return rewriteHostedLoginResponse(resp, g.publicOrigin.String(), strings.TrimRight(g.loginTarget.String(), "/"))
 		},
-		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, _ error) {
+		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
+			var tooLarge *http.MaxBytesError
+			if errors.As(err, &tooLarge) {
+				http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+				return
+			}
 			http.Error(w, "AH login is temporarily unavailable", http.StatusBadGateway)
 		},
 	}
