@@ -18,6 +18,15 @@ type config struct {
 	ExpiresAt    time.Time `json:"expires_at,omitempty"`
 }
 
+// AuthSession is the authenticated token state produced by an AH login.
+// Callers must treat every field as secret except MemberID and ExpiresAt.
+type AuthSession struct {
+	AccessToken  string    `json:"access_token"`
+	RefreshToken string    `json:"refresh_token"`
+	MemberID     string    `json:"member_id"`
+	ExpiresAt    time.Time `json:"expires_at"`
+}
+
 // NutritionalInfo represents a single nutrient value for a product.
 type NutritionalInfo struct {
 	// Name is the display name (e.g., "Fat", "Protein", "Energy").
