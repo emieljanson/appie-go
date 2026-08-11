@@ -110,6 +110,12 @@ appie login --no-browser
 # Also bind the local helper to a caller-generated capability
 appie login --no-browser --login-nonce "$LOGIN_NONCE"
 
+# Run the isolated hosted gateway (the shared secret is read from the environment)
+APPIE_GATEWAY_SHARED_SECRET="$SECRET" appie gateway \
+  --public-origin https://login.example.com \
+  --app-origin https://app.example.com \
+  --handoff-url https://app.example.com/api/ah/connect/complete
+
 # Search products
 appie search "pindakaas"
 appie search --bonus "kaas"           # only bonus products

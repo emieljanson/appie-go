@@ -17,6 +17,7 @@ var globalOpts struct {
 	Verbose bool   `short:"v" long:"verbose" description:"Verbose output"`
 
 	Login   loginCommand        `command:"login" description:"Login to Albert Heijn"`
+	Gateway gatewayCommand      `command:"gateway" description:"Run the hosted AH login gateway"`
 	Search  searchCommand       `command:"search" description:"Search for products"`
 	Receipt receiptCommand      `command:"receipt" subcommands-optional:"true" description:"List recent receipts"`
 	Order   orderCommand        `command:"order" subcommands-optional:"true" description:"List open orders"`

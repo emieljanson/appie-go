@@ -207,6 +207,21 @@ func (c *Client) IsAuthenticated() bool {
 	return c.accessToken != ""
 }
 
+// AuthSession returns a copy of the current authenticated token state.
+func (c *Client) AuthSession() (AuthSession, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.accessToken == "" || c.refreshToken == "" || c.memberID == "" {
+		return AuthSession{}, false
+	}
+	return AuthSession{
+		AccessToken:  c.accessToken,
+		RefreshToken: c.refreshToken,
+		MemberID:     c.memberID,
+		ExpiresAt:    c.expiresAt,
+	}, true
+}
+
 // setHeaders sets the common headers for API requests.
 func (c *Client) setHeaders(req *http.Request) {
 	req.Header.Set("User-Agent", c.userAgent)
