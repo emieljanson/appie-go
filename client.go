@@ -211,7 +211,7 @@ func (c *Client) IsAuthenticated() bool {
 func (c *Client) AuthSession() (AuthSession, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	if c.accessToken == "" || c.refreshToken == "" || c.memberID == "" {
+	if c.accessToken == "" || c.refreshToken == "" {
 		return AuthSession{}, false
 	}
 	return AuthSession{

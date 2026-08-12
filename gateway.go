@@ -297,7 +297,7 @@ func (g *HostedLoginGateway) handleCallback(w http.ResponseWriter, r *http.Reque
 		g.redirectResult(w, r, attempt, "failed")
 		return
 	}
-	client := New(WithBaseURL(g.apiBaseURL), WithHTTPClient(g.apiClient))
+	client := New(WithBaseURL(g.apiBaseURL), WithHTTPClient(g.apiClient), WithLogger(g.logger))
 	if err := client.exchangeCode(r.Context(), code); err != nil {
 		g.logger.Printf("gateway callback attempt=%s result=exchange_failed", redactedAttemptID(attempt.id))
 		g.finishAttempt(attempt.id)
@@ -306,9 +306,20 @@ func (g *HostedLoginGateway) handleCallback(w http.ResponseWriter, r *http.Reque
 	}
 	session, ok := client.AuthSession()
 	if !ok {
+		g.logger.Printf("gateway callback attempt=%s result=session_incomplete", redactedAttemptID(attempt.id))
 		g.finishAttempt(attempt.id)
 		g.redirectResult(w, r, attempt, "failed")
 		return
+	}
+	if session.MemberID == "" {
+		member, err := client.GetMember(r.Context())
+		if err != nil || member.ID == "" {
+			g.logger.Printf("gateway callback attempt=%s result=member_lookup_failed", redactedAttemptID(attempt.id))
+			g.finishAttempt(attempt.id)
+			g.redirectResult(w, r, attempt, "failed")
+			return
+		}
+		session.MemberID = member.ID
 	}
 	if err := g.handoff(r.Context(), attempt.id, session); err != nil {
 		g.logger.Printf("gateway callback attempt=%s result=handoff_failed", redactedAttemptID(attempt.id))

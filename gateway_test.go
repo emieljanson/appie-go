@@ -34,6 +34,7 @@ type gatewayFixture struct {
 	upstreamCHUA   chan string
 	logs           *bytes.Buffer
 	now            time.Time
+	tokenMemberID  string
 }
 
 type panicRoundTripper struct{ value any }
@@ -52,6 +53,7 @@ func newGatewayFixture(t *testing.T) *gatewayFixture {
 		upstreamCHUA:   make(chan string, 8),
 		logs:           &bytes.Buffer{},
 		now:            time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC),
+		tokenMemberID:  "member-123",
 	}
 	fixture.appServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/ah/connect/complete" {
@@ -93,11 +95,19 @@ func newGatewayFixture(t *testing.T) *gatewayFixture {
 		}
 	}))
 	fixture.apiServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/mobile-auth/v1/auth/token" {
+		switch r.URL.Path {
+		case "/mobile-auth/v1/auth/token":
+			_ = json.NewEncoder(w).Encode(token{
+				AccessToken: "secret-access", RefreshToken: "secret-refresh",
+				MemberID: fixture.tokenMemberID, ExpiresIn: 3600,
+			})
+		case "/graphql":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{"member": map[string]any{"id": 123}},
+			})
+		default:
 			http.NotFound(w, r)
-			return
 		}
-		_ = json.NewEncoder(w).Encode(token{AccessToken: "secret-access", RefreshToken: "secret-refresh", MemberID: "member-123", ExpiresIn: 3600})
 	}))
 
 	unstarted := httptest.NewUnstartedServer(nil)
@@ -226,6 +236,34 @@ func TestHostedGatewayCompletesOneTimeSignedHandoff(t *testing.T) {
 	}
 	if strings.Contains(fixture.logs.String(), "secret-access") || strings.Contains(fixture.logs.String(), "secret-refresh") || strings.Contains(fixture.logs.String(), "auth-code") {
 		t.Fatalf("secret material reached gateway logs: %s", fixture.logs)
+	}
+	if !strings.Contains(fixture.logs.String(), "POST /mobile-auth/v1/auth/token 200") {
+		t.Fatalf("token exchange status was not logged safely: %s", fixture.logs)
+	}
+}
+
+func TestHostedGatewayRecoversMemberIDMissingFromTokenResponse(t *testing.T) {
+	fixture := newGatewayFixture(t)
+	fixture.tokenMemberID = ""
+	client := gatewayClient(t)
+	attemptID := strings.Repeat("m", 32)
+
+	start := startGatewayAttempt(t, fixture, client, attemptID)
+	start.Body.Close()
+	callback, err := client.Get(fixture.server.URL + "/callback?code=auth-code")
+	if err != nil {
+		t.Fatal(err)
+	}
+	callback.Body.Close()
+
+	var payload struct {
+		Session AuthSession `json:"session"`
+	}
+	if err := json.Unmarshal(<-fixture.handoffs, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if callback.StatusCode != http.StatusSeeOther || payload.Session.MemberID != "123" {
+		t.Fatalf("member ID was not recovered from the authenticated profile: status=%d session=%+v", callback.StatusCode, payload.Session)
 	}
 }
 
