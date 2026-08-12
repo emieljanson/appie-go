@@ -77,7 +77,10 @@ func newGatewayFixture(t *testing.T) *gatewayFixture {
 		switch r.URL.Path {
 		case "/login":
 			w.Header().Set("Content-Type", "text/html")
-			fmt.Fprintf(w, `<a href="%s/next">next</a><a href="appie://login-exit?code=from-body">done</a>`, fixture.loginServer.URL)
+			fmt.Fprintf(w, `<html><body><a href="%s/next">next</a><a href="appie://login-exit?code=from-body">done</a></body></html>`, fixture.loginServer.URL)
+		case "/login/_next/static/login.css":
+			w.Header().Set("Content-Type", "text/css")
+			_, _ = io.WriteString(w, "body{color:#111}")
 		case "/submit":
 			_, err := io.Copy(io.Discard, r.Body)
 			if err != nil {
@@ -176,6 +179,9 @@ func TestHostedGatewayCompletesOneTimeSignedHandoff(t *testing.T) {
 	if !strings.Contains(string(body), fixture.server.URL+"/callback") {
 		t.Fatalf("hosted callback missing: %s", body)
 	}
+	if !strings.Contains(string(body), "Je blijft op Beter Gekozen") || strings.Count(string(body), "betergekozen-login-notice") < 1 {
+		t.Fatalf("hosted login notice missing: %s", body)
+	}
 	if upstreamCookie := <-fixture.upstreamCookie; strings.Contains(upstreamCookie, hostedAttemptCookie) {
 		t.Fatal("gateway capability leaked to AH upstream")
 	}
@@ -214,6 +220,43 @@ func TestHostedGatewayCompletesOneTimeSignedHandoff(t *testing.T) {
 	}
 	if strings.Contains(fixture.logs.String(), "secret-access") || strings.Contains(fixture.logs.String(), "secret-refresh") || strings.Contains(fixture.logs.String(), "auth-code") {
 		t.Fatalf("secret material reached gateway logs: %s", fixture.logs)
+	}
+}
+
+func TestHostedGatewayKeepsPublicStylesAvailableWithoutAttempt(t *testing.T) {
+	fixture := newGatewayFixture(t)
+
+	resp, err := http.Get(fixture.server.URL + "/login/_next/static/login.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || string(body) != "body{color:#111}" {
+		t.Fatalf("unexpected public stylesheet response: %d %q", resp.StatusCode, body)
+	}
+
+	login, err := http.Get(fixture.server.URL + "/login")
+	if err != nil {
+		t.Fatal(err)
+	}
+	login.Body.Close()
+	if login.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected login document to remain protected, got %d", login.StatusCode)
+	}
+}
+
+func TestInjectHostedLoginNoticeOnlyTouchesHTMLBody(t *testing.T) {
+	body := []byte(`<html><body class="login"><main>AH login</main></body></html>`)
+	got := injectHostedLoginNotice(body)
+	if !bytes.Contains(got, []byte(hostedLoginNotice)) {
+		t.Fatalf("notice was not injected: %s", got)
+	}
+	if bytes.Count(got, []byte(`id="betergekozen-login-notice"`)) != 1 {
+		t.Fatalf("notice was not injected exactly once: %s", got)
+	}
+	if gotWithoutBody := injectHostedLoginNotice([]byte("body{color:#111}")); !bytes.Equal(gotWithoutBody, []byte("body{color:#111}")) {
+		t.Fatalf("non-HTML body was changed: %s", gotWithoutBody)
 	}
 }
 
