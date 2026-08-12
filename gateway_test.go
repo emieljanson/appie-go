@@ -182,9 +182,11 @@ func TestHostedGatewayCompletesOneTimeSignedHandoff(t *testing.T) {
 	if !strings.Contains(string(body), "Je blijft op Beter Gekozen") || strings.Count(string(body), "betergekozen-login-notice") < 1 {
 		t.Fatalf("hosted login notice missing: %s", body)
 	}
-	if !strings.Contains(string(body), fixture.loginServer.URL+"/login/_next/static/login.css") ||
-		!strings.Contains(string(body), fixture.loginServer.URL+"/login/_next/static/login.js") {
-		t.Fatalf("hosted static assets were not routed directly to AH: %s", body)
+	if !strings.Contains(string(body), fixture.loginServer.URL+"/login/_next/static/login.css") {
+		t.Fatalf("hosted stylesheet was not routed directly to AH: %s", body)
+	}
+	if !strings.Contains(string(body), `src="/login/_next/static/login.js"`) {
+		t.Fatalf("hosted script was unexpectedly routed away from the gateway: %s", body)
 	}
 	if upstreamCookie := <-fixture.upstreamCookie; strings.Contains(upstreamCookie, hostedAttemptCookie) {
 		t.Fatal("gateway capability leaked to AH upstream")
@@ -264,13 +266,13 @@ func TestInjectHostedLoginNoticeOnlyTouchesHTMLBody(t *testing.T) {
 	}
 }
 
-func TestRouteHostedStaticAssetsDirectlyLeavesApplicationRoutesHosted(t *testing.T) {
-	body := []byte(`<link href="/login/_next/static/login.css"><form action="/login"><a href="/login/passkeys">Passkeys</a></form>`)
-	got := routeHostedStaticAssetsDirectly(body, "https://login.ah.nl")
+func TestRouteHostedStylesheetsDirectlyLeavesScriptsAndApplicationRoutesHosted(t *testing.T) {
+	body := []byte(`<link href="/login/_next/static/login.css"><script src="/login/_next/static/login.js"></script><form action="/login"><a href="/login/passkeys">Passkeys</a></form>`)
+	got := routeHostedStylesheetsDirectly(body, "https://login.ah.nl")
 	if !bytes.Contains(got, []byte(`href="https://login.ah.nl/login/_next/static/login.css"`)) {
 		t.Fatalf("static asset was not routed directly: %s", got)
 	}
-	for _, hosted := range []string{`action="/login"`, `href="/login/passkeys"`} {
+	for _, hosted := range []string{`action="/login"`, `href="/login/passkeys"`, `src="/login/_next/static/login.js"`} {
 		if !bytes.Contains(got, []byte(hosted)) {
 			t.Fatalf("application route was unexpectedly changed: %s", got)
 		}
