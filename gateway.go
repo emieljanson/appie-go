@@ -65,6 +65,7 @@ type HostedLoginGateway struct {
 	apiBaseURL     string
 	secret         []byte
 	client         *http.Client
+	apiClient      *http.Client
 	proxyTransport http.RoundTripper
 	logger         *log.Logger
 	now            func() time.Time
@@ -132,6 +133,9 @@ func NewHostedLoginGateway(cfg HostedGatewayConfig) (*HostedLoginGateway, error)
 			return nil, fmt.Errorf("create browser-compatible AH transport: %w", err)
 		}
 	}
+	apiClientCopy := *client
+	apiClientCopy.Transport = proxyTransport
+	apiClient := &apiClientCopy
 	logger := cfg.Logger
 	if logger == nil {
 		logger = log.New(io.Discard, "", 0)
@@ -155,6 +159,7 @@ func NewHostedLoginGateway(cfg HostedGatewayConfig) (*HostedLoginGateway, error)
 		apiBaseURL:     strings.TrimRight(apiBaseURL, "/"),
 		secret:         append([]byte(nil), cfg.SharedSecret...),
 		client:         client,
+		apiClient:      apiClient,
 		proxyTransport: proxyTransport,
 		logger:         logger,
 		now:            now,
@@ -288,7 +293,7 @@ func (g *HostedLoginGateway) handleCallback(w http.ResponseWriter, r *http.Reque
 		g.redirectResult(w, r, attempt, "failed")
 		return
 	}
-	client := New(WithBaseURL(g.apiBaseURL), WithHTTPClient(g.client))
+	client := New(WithBaseURL(g.apiBaseURL), WithHTTPClient(g.apiClient))
 	if err := client.exchangeCode(r.Context(), code); err != nil {
 		g.logger.Printf("gateway callback attempt=%s result=exchange_failed", redactedAttemptID(attempt.id))
 		g.finishAttempt(attempt.id)
