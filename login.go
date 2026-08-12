@@ -230,7 +230,7 @@ func sanitizeCookie(cookie string) string {
 
 func readResponseBody(resp *http.Response) ([]byte, error) {
 	var reader io.Reader = resp.Body
-	if resp.Header.Get("Content-Encoding") == "gzip" {
+	if resp.Header.Get("Content-Encoding") == "gzip" && !resp.Uncompressed {
 		gz, err := gzip.NewReader(resp.Body)
 		if err != nil {
 			return nil, err

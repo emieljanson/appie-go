@@ -12,6 +12,21 @@ import (
 	"testing"
 )
 
+func TestReadResponseBodyDoesNotDecompressAnAlreadyDecodedResponse(t *testing.T) {
+	response := &http.Response{
+		Body:         io.NopCloser(strings.NewReader("already decoded")),
+		Header:       http.Header{"Content-Encoding": []string{"gzip"}},
+		Uncompressed: true,
+	}
+	body, err := readResponseBody(response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != "already decoded" {
+		t.Fatalf("unexpected response body: %q", body)
+	}
+}
+
 func TestLogin(t *testing.T) {
 	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

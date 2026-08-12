@@ -126,6 +126,7 @@ func NewHostedLoginGateway(cfg HostedGatewayConfig) (*HostedLoginGateway, error)
 		proxyTransport, err = srt.NewSpoofedRoundTripper(
 			tlsclient.WithRandomTLSExtensionOrder(),
 			tlsclient.WithClientProfile(profiles.Chrome_120),
+			tlsclient.WithNotFollowRedirects(),
 			tlsclient.WithTimeoutSeconds(20),
 		)
 		if err != nil {
@@ -384,6 +385,7 @@ func (g *HostedLoginGateway) handleProxy(w http.ResponseWriter, r *http.Request)
 				http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
 				return
 			}
+			g.logger.Printf("gateway proxy result=upstream_failed error=%q", err.Error())
 			http.Error(w, "AH login is temporarily unavailable", http.StatusBadGateway)
 		},
 	}
