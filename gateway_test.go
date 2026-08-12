@@ -77,7 +77,7 @@ func newGatewayFixture(t *testing.T) *gatewayFixture {
 		switch r.URL.Path {
 		case "/login":
 			w.Header().Set("Content-Type", "text/html")
-			fmt.Fprintf(w, `<html><body><a href="%s/next">next</a><a href="appie://login-exit?code=from-body">done</a></body></html>`, fixture.loginServer.URL)
+			fmt.Fprintf(w, `<html><head><link rel="stylesheet" href="/login/_next/static/login.css"><script src="/login/_next/static/login.js"></script></head><body><a href="%s/next">next</a><a href="appie://login-exit?code=from-body">done</a></body></html>`, fixture.loginServer.URL)
 		case "/login/_next/static/login.css":
 			w.Header().Set("Content-Type", "text/css")
 			_, _ = io.WriteString(w, "body{color:#111}")
@@ -173,7 +173,7 @@ func TestHostedGatewayCompletesOneTimeSignedHandoff(t *testing.T) {
 	}
 	body, _ := io.ReadAll(login.Body)
 	login.Body.Close()
-	if strings.Contains(string(body), fixture.loginServer.URL) || strings.Contains(string(body), "appie://") {
+	if strings.Contains(string(body), fixture.loginServer.URL+"/next") || strings.Contains(string(body), "appie://") {
 		t.Fatalf("hosted response was not rewritten: %s", body)
 	}
 	if !strings.Contains(string(body), fixture.server.URL+"/callback") {
@@ -181,6 +181,10 @@ func TestHostedGatewayCompletesOneTimeSignedHandoff(t *testing.T) {
 	}
 	if !strings.Contains(string(body), "Je blijft op Beter Gekozen") || strings.Count(string(body), "betergekozen-login-notice") < 1 {
 		t.Fatalf("hosted login notice missing: %s", body)
+	}
+	if !strings.Contains(string(body), fixture.loginServer.URL+"/login/_next/static/login.css") ||
+		!strings.Contains(string(body), fixture.loginServer.URL+"/login/_next/static/login.js") {
+		t.Fatalf("hosted static assets were not routed directly to AH: %s", body)
 	}
 	if upstreamCookie := <-fixture.upstreamCookie; strings.Contains(upstreamCookie, hostedAttemptCookie) {
 		t.Fatal("gateway capability leaked to AH upstream")
@@ -257,6 +261,19 @@ func TestInjectHostedLoginNoticeOnlyTouchesHTMLBody(t *testing.T) {
 	}
 	if gotWithoutBody := injectHostedLoginNotice([]byte("body{color:#111}")); !bytes.Equal(gotWithoutBody, []byte("body{color:#111}")) {
 		t.Fatalf("non-HTML body was changed: %s", gotWithoutBody)
+	}
+}
+
+func TestRouteHostedStaticAssetsDirectlyLeavesApplicationRoutesHosted(t *testing.T) {
+	body := []byte(`<link href="/login/_next/static/login.css"><form action="/login"><a href="/login/passkeys">Passkeys</a></form>`)
+	got := routeHostedStaticAssetsDirectly(body, "https://login.ah.nl")
+	if !bytes.Contains(got, []byte(`href="https://login.ah.nl/login/_next/static/login.css"`)) {
+		t.Fatalf("static asset was not routed directly: %s", got)
+	}
+	for _, hosted := range []string{`action="/login"`, `href="/login/passkeys"`} {
+		if !bytes.Contains(got, []byte(hosted)) {
+			t.Fatalf("application route was unexpectedly changed: %s", got)
+		}
 	}
 }
 

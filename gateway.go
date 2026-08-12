@@ -29,8 +29,8 @@ const (
 	hostedAttemptCookie  = "appie_gateway_attempt"
 	maxGatewayBodyBytes  = 1 << 20
 	maxGatewayAttemptTTL = 10 * time.Minute
-	hostedLoginCSP       = "default-src 'self'; img-src 'self' data: https://hcaptcha.com https://*.hcaptcha.com; style-src 'self' 'unsafe-inline' https://hcaptcha.com https://*.hcaptcha.com; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://hcaptcha.com https://*.hcaptcha.com; connect-src 'self' https://hcaptcha.com https://*.hcaptcha.com; frame-src https://hcaptcha.com https://*.hcaptcha.com; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
-	hostedLoginNotice    = `<style id="betergekozen-login-notice-style">#betergekozen-login-notice{box-sizing:border-box;width:100%;flex:none;background:#f3e7d9;border-bottom:1px solid rgba(20,20,20,.12);color:#171717;font-family:Arial,sans-serif}#betergekozen-login-notice p{box-sizing:border-box;max-width:1120px;margin:0 auto;padding:13px 20px;font-size:14px;line-height:1.45}@media(max-width:600px){#betergekozen-login-notice p{padding:11px 16px;font-size:13px}}</style><aside id="betergekozen-login-notice" aria-label="Uitleg over de koppeling"><p>Je blijft op Beter Gekozen om de koppeling af te ronden; je wachtwoord gaat alleen naar Albert Heijn en wordt niet door ons opgeslagen.</p></aside>`
+	hostedLoginCSP       = "default-src 'self'; img-src 'self' data: https://login.ah.nl https://static.ah.nl https://hcaptcha.com https://*.hcaptcha.com; font-src 'self' data: https://static.ah.nl; style-src 'self' 'unsafe-inline' https://login.ah.nl https://static.ah.nl https://hcaptcha.com https://*.hcaptcha.com; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://login.ah.nl https://hcaptcha.com https://*.hcaptcha.com; connect-src 'self' https://login.ah.nl https://hcaptcha.com https://*.hcaptcha.com; frame-src https://hcaptcha.com https://*.hcaptcha.com; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+	hostedLoginNotice    = `<style id="betergekozen-login-notice-style">html,body{margin:0!important;padding:0!important}#betergekozen-login-notice{box-sizing:border-box;width:100%;flex:none;background:#f3e7d9;border-bottom:1px solid rgba(20,20,20,.12);color:#171717;font-family:Arial,sans-serif}#betergekozen-login-notice p{box-sizing:border-box;max-width:1120px;margin:0 auto;padding:13px 20px;font-size:14px;line-height:1.45}@media(max-width:600px){#betergekozen-login-notice p{padding:11px 16px;font-size:13px}}</style><aside id="betergekozen-login-notice" aria-label="Uitleg over de koppeling"><p>Je blijft op Beter Gekozen om de koppeling af te ronden; je wachtwoord gaat alleen naar Albert Heijn en wordt niet door ons opgeslagen.</p></aside>`
 )
 
 // HostedGatewayConfig configures the narrow HTTPS gateway used to complete AH login.
@@ -549,6 +549,7 @@ func rewriteHostedLoginResponse(resp *http.Response, publicOrigin, targetOrigin 
 	body = bytes.ReplaceAll(body, []byte("appie://login-exit"), []byte(publicOrigin+"/callback"))
 	body = bytes.ReplaceAll(body, []byte(targetOrigin), []byte(publicOrigin))
 	if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices && strings.Contains(contentType, "text/html") {
+		body = routeHostedStaticAssetsDirectly(body, targetOrigin)
 		body = injectHostedLoginNotice(body)
 	}
 	resp.Body = io.NopCloser(bytes.NewReader(body))
@@ -556,6 +557,10 @@ func rewriteHostedLoginResponse(resp *http.Response, publicOrigin, targetOrigin 
 	resp.Header.Set("Content-Length", strconv.Itoa(len(body)))
 	resp.Header.Del("Content-Encoding")
 	return nil
+}
+
+func routeHostedStaticAssetsDirectly(body []byte, targetOrigin string) []byte {
+	return bytes.ReplaceAll(body, []byte(`"/login/_next/static/`), []byte(`"`+targetOrigin+`/login/_next/static/`))
 }
 
 func injectHostedLoginNotice(body []byte) []byte {
