@@ -14,7 +14,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"net/http/httputil"
 	"net/url"
 	"strconv"
 	"strings"
@@ -361,35 +360,49 @@ func (g *HostedLoginGateway) handleProxy(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxGatewayBodyBytes)
-	proxy := &httputil.ReverseProxy{
-		Transport: g.proxyTransport,
-		Director: func(req *http.Request) {
-			req.URL.Scheme = g.loginTarget.Scheme
-			req.URL.Host = g.loginTarget.Host
-			req.Host = g.loginTarget.Host
-			req.Header.Del("Accept-Encoding")
-			removeCookie(req, hostedAttemptCookie)
-			if req.Header.Get("Origin") == g.publicOrigin.String() {
-				req.Header.Set("Origin", strings.TrimRight(g.loginTarget.String(), "/"))
-			}
-			if referer := req.Header.Get("Referer"); strings.HasPrefix(referer, g.publicOrigin.String()) {
-				req.Header.Set("Referer", strings.Replace(referer, g.publicOrigin.String(), strings.TrimRight(g.loginTarget.String(), "/"), 1))
-			}
-		},
-		ModifyResponse: func(resp *http.Response) error {
-			return rewriteHostedLoginResponse(resp, g.publicOrigin.String(), strings.TrimRight(g.loginTarget.String(), "/"))
-		},
-		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
-			var tooLarge *http.MaxBytesError
-			if errors.As(err, &tooLarge) {
-				http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
-				return
-			}
-			g.logger.Printf("gateway proxy result=upstream_failed error=%q", err.Error())
-			http.Error(w, "AH login is temporarily unavailable", http.StatusBadGateway)
-		},
+	upstream := r.Clone(r.Context())
+	upstream.RequestURI = ""
+	upstream.URL.Scheme = g.loginTarget.Scheme
+	upstream.URL.Host = g.loginTarget.Host
+	upstream.Host = g.loginTarget.Host
+	upstream.Header = r.Header.Clone()
+	upstream.Header.Del("Accept-Encoding")
+	removeCookie(upstream, hostedAttemptCookie)
+	if upstream.Header.Get("Origin") == g.publicOrigin.String() {
+		upstream.Header.Set("Origin", strings.TrimRight(g.loginTarget.String(), "/"))
 	}
-	proxy.ServeHTTP(w, r)
+	if referer := upstream.Header.Get("Referer"); strings.HasPrefix(referer, g.publicOrigin.String()) {
+		upstream.Header.Set("Referer", strings.Replace(referer, g.publicOrigin.String(), strings.TrimRight(g.loginTarget.String(), "/"), 1))
+	}
+
+	resp, err := g.proxyTransport.RoundTrip(upstream)
+	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+			return
+		}
+		g.logger.Printf("gateway proxy result=upstream_failed error=%q", err.Error())
+		http.Error(w, "AH login is temporarily unavailable", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	if err := rewriteHostedLoginResponse(resp, g.publicOrigin.String(), strings.TrimRight(g.loginTarget.String(), "/")); err != nil {
+		g.logger.Printf("gateway proxy result=response_rewrite_failed error=%q", err.Error())
+		http.Error(w, "AH login is temporarily unavailable", http.StatusBadGateway)
+		return
+	}
+	for key, values := range resp.Header {
+		for _, value := range values {
+			w.Header().Add(key, value)
+		}
+	}
+	w.WriteHeader(resp.StatusCode)
+	if r.Method != http.MethodHead {
+		if _, err := io.Copy(w, resp.Body); err != nil {
+			g.logger.Printf("gateway proxy result=response_copy_failed error=%q", err.Error())
+		}
+	}
 }
 
 func (g *HostedLoginGateway) authorizeAttempt(r *http.Request, consume bool) (*hostedAttempt, bool) {
