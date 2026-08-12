@@ -343,6 +343,17 @@ func (g *HostedLoginGateway) handoff(ctx context.Context, attemptID string, sess
 }
 
 func (g *HostedLoginGateway) handleProxy(w http.ResponseWriter, r *http.Request) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			classification := "unexpected_panic"
+			if recovered == http.ErrAbortHandler {
+				classification = "abort_handler"
+			}
+			g.logger.Printf("gateway proxy result=panic classification=%s detail=%q", classification, recovered)
+			w.Header().Set("X-Appie-Gateway-Error", classification)
+			http.Error(w, "AH login is temporarily unavailable", http.StatusBadGateway)
+		}
+	}()
 	if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodPost {
 		methodNotAllowed(w, "GET, HEAD, POST")
 		return

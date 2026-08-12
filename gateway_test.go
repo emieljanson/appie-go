@@ -34,6 +34,12 @@ type gatewayFixture struct {
 	now            time.Time
 }
 
+type panicRoundTripper struct{ value any }
+
+func (transport panicRoundTripper) RoundTrip(*http.Request) (*http.Response, error) {
+	panic(transport.value)
+}
+
 func newGatewayFixture(t *testing.T) *gatewayFixture {
 	t.Helper()
 	fixture := &gatewayFixture{
@@ -514,6 +520,26 @@ func TestHostedGatewayRewritesValidatedBrowserHeaders(t *testing.T) {
 	}
 	if upstreamCookie := <-fixture.upstreamCookie; strings.Contains(upstreamCookie, hostedAttemptCookie) {
 		t.Fatal("gateway capability leaked in proxied cookie header")
+	}
+}
+
+func TestHostedGatewayTurnsProxyPanicsIntoSafeErrors(t *testing.T) {
+	fixture := newGatewayFixture(t)
+	client := gatewayClient(t)
+	start := startGatewayAttempt(t, fixture, client, strings.Repeat("p", 32))
+	start.Body.Close()
+	fixture.gateway.proxyTransport = panicRoundTripper{value: http.ErrAbortHandler}
+
+	resp, err := client.Get(fixture.server.URL + "/login")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Fatalf("expected safe gateway error, got %d", resp.StatusCode)
+	}
+	if got := resp.Header.Get("X-Appie-Gateway-Error"); got != "abort_handler" {
+		t.Fatalf("unexpected panic classification %q", got)
 	}
 }
 
