@@ -20,6 +20,10 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	tlsclient "github.com/bogdanfinn/tls-client"
+	"github.com/bogdanfinn/tls-client/profiles"
+	srt "github.com/juzeon/spoofed-round-tripper"
 )
 
 const (
@@ -55,16 +59,17 @@ type hostedAttempt struct {
 // HostedLoginGateway is an http.Handler. It keeps only short-lived attempt
 // capabilities in memory; AH credentials and tokens are never retained.
 type HostedLoginGateway struct {
-	publicOrigin *url.URL
-	appOrigin    *url.URL
-	handoffURL   *url.URL
-	loginTarget  *url.URL
-	apiBaseURL   string
-	secret       []byte
-	client       *http.Client
-	logger       *log.Logger
-	now          func() time.Time
-	maxAttempts  int
+	publicOrigin   *url.URL
+	appOrigin      *url.URL
+	handoffURL     *url.URL
+	loginTarget    *url.URL
+	apiBaseURL     string
+	secret         []byte
+	client         *http.Client
+	proxyTransport http.RoundTripper
+	logger         *log.Logger
+	now            func() time.Time
+	maxAttempts    int
 
 	mu       sync.Mutex
 	attempts map[string]*hostedAttempt
@@ -103,6 +108,7 @@ func NewHostedLoginGateway(cfg HostedGatewayConfig) (*HostedLoginGateway, error)
 		apiBaseURL = defaultBaseURL
 	}
 	client := cfg.HTTPClient
+	usingDefaultClient := client == nil
 	if client == nil {
 		client = &http.Client{Timeout: 20 * time.Second}
 	}
@@ -112,6 +118,20 @@ func NewHostedLoginGateway(cfg HostedGatewayConfig) (*HostedLoginGateway, error)
 		clientCopy.Timeout = 20 * time.Second
 	}
 	client = &clientCopy
+	proxyTransport := client.Transport
+	if proxyTransport == nil {
+		proxyTransport = http.DefaultTransport
+	}
+	if usingDefaultClient && !cfg.AllowInsecureForTests {
+		proxyTransport, err = srt.NewSpoofedRoundTripper(
+			tlsclient.WithRandomTLSExtensionOrder(),
+			tlsclient.WithClientProfile(profiles.Chrome_120),
+			tlsclient.WithTimeoutSeconds(20),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("create browser-compatible AH transport: %w", err)
+		}
+	}
 	logger := cfg.Logger
 	if logger == nil {
 		logger = log.New(io.Discard, "", 0)
@@ -128,17 +148,18 @@ func NewHostedLoginGateway(cfg HostedGatewayConfig) (*HostedLoginGateway, error)
 		return nil, errors.New("max active attempts must be between 1 and 10000")
 	}
 	return &HostedLoginGateway{
-		publicOrigin: publicOrigin,
-		appOrigin:    appOrigin,
-		handoffURL:   handoffURL,
-		loginTarget:  loginTarget,
-		apiBaseURL:   strings.TrimRight(apiBaseURL, "/"),
-		secret:       append([]byte(nil), cfg.SharedSecret...),
-		client:       client,
-		logger:       logger,
-		now:          now,
-		maxAttempts:  maxAttempts,
-		attempts:     make(map[string]*hostedAttempt),
+		publicOrigin:   publicOrigin,
+		appOrigin:      appOrigin,
+		handoffURL:     handoffURL,
+		loginTarget:    loginTarget,
+		apiBaseURL:     strings.TrimRight(apiBaseURL, "/"),
+		secret:         append([]byte(nil), cfg.SharedSecret...),
+		client:         client,
+		proxyTransport: proxyTransport,
+		logger:         logger,
+		now:            now,
+		maxAttempts:    maxAttempts,
+		attempts:       make(map[string]*hostedAttempt),
 	}, nil
 }
 
@@ -340,6 +361,7 @@ func (g *HostedLoginGateway) handleProxy(w http.ResponseWriter, r *http.Request)
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxGatewayBodyBytes)
 	proxy := &httputil.ReverseProxy{
+		Transport: g.proxyTransport,
 		Director: func(req *http.Request) {
 			req.URL.Scheme = g.loginTarget.Scheme
 			req.URL.Host = g.loginTarget.Host
