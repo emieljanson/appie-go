@@ -392,6 +392,22 @@ func (g *HostedLoginGateway) handleProxy(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "AH login is temporarily unavailable", http.StatusBadGateway)
 		return
 	}
+	const maxUpstreamResponseBytes = 8 << 20
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxUpstreamResponseBytes+1))
+	if err != nil {
+		g.logger.Printf("gateway proxy result=response_read_failed error=%q", err.Error())
+		http.Error(w, "AH login is temporarily unavailable", http.StatusBadGateway)
+		return
+	}
+	if len(body) > maxUpstreamResponseBytes {
+		g.logger.Printf("gateway proxy result=response_too_large")
+		http.Error(w, "AH login is temporarily unavailable", http.StatusBadGateway)
+		return
+	}
+	resp.Header.Del("Transfer-Encoding")
+	resp.Header.Del("Content-Length")
+	resp.Header.Del("Connection")
+	resp.Header.Set("Content-Length", strconv.Itoa(len(body)))
 	for key, values := range resp.Header {
 		for _, value := range values {
 			w.Header().Add(key, value)
@@ -399,7 +415,7 @@ func (g *HostedLoginGateway) handleProxy(w http.ResponseWriter, r *http.Request)
 	}
 	w.WriteHeader(resp.StatusCode)
 	if r.Method != http.MethodHead {
-		if _, err := io.Copy(w, resp.Body); err != nil {
+		if _, err := w.Write(body); err != nil {
 			g.logger.Printf("gateway proxy result=response_copy_failed error=%q", err.Error())
 		}
 	}
