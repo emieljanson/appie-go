@@ -548,7 +548,7 @@ func rewriteHostedLoginResponse(resp *http.Response, publicOrigin, targetOrigin 
 	}
 	body = bytes.ReplaceAll(body, []byte("appie://login-exit"), []byte(publicOrigin+"/callback"))
 	body = bytes.ReplaceAll(body, []byte(targetOrigin), []byte(publicOrigin))
-	if strings.Contains(contentType, "text/html") {
+	if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices && strings.Contains(contentType, "text/html") {
 		body = injectHostedLoginNotice(body)
 	}
 	resp.Body = io.NopCloser(bytes.NewReader(body))

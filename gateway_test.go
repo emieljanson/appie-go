@@ -260,6 +260,21 @@ func TestInjectHostedLoginNoticeOnlyTouchesHTMLBody(t *testing.T) {
 	}
 }
 
+func TestHostedLoginNoticeIsNotAddedToUpstreamErrors(t *testing.T) {
+	response := &http.Response{
+		StatusCode: http.StatusForbidden,
+		Header:     http.Header{"Content-Type": []string{"text/html"}},
+		Body:       io.NopCloser(strings.NewReader("<html><body>Access Denied</body></html>")),
+	}
+	if err := rewriteHostedLoginResponse(response, "https://login.app.test", "https://login.ah.test"); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(response.Body)
+	if bytes.Contains(body, []byte("betergekozen-login-notice")) {
+		t.Fatalf("notice was added to an upstream error: %s", body)
+	}
+}
+
 func TestHostedGatewayIsolatesConcurrentBrowserAttempts(t *testing.T) {
 	fixture := newGatewayFixture(t)
 	clients := []*http.Client{gatewayClient(t), gatewayClient(t)}
