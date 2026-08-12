@@ -30,6 +30,8 @@ type gatewayFixture struct {
 	handoffs       chan []byte
 	upstreamCookie chan string
 	upstreamOrigin chan string
+	upstreamAgent  chan string
+	upstreamCHUA   chan string
 	logs           *bytes.Buffer
 	now            time.Time
 }
@@ -46,6 +48,8 @@ func newGatewayFixture(t *testing.T) *gatewayFixture {
 		handoffs:       make(chan []byte, 8),
 		upstreamCookie: make(chan string, 8),
 		upstreamOrigin: make(chan string, 8),
+		upstreamAgent:  make(chan string, 8),
+		upstreamCHUA:   make(chan string, 8),
 		logs:           &bytes.Buffer{},
 		now:            time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC),
 	}
@@ -68,6 +72,8 @@ func newGatewayFixture(t *testing.T) *gatewayFixture {
 	fixture.loginServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fixture.upstreamCookie <- r.Header.Get("Cookie")
 		fixture.upstreamOrigin <- r.Header.Get("Origin")
+		fixture.upstreamAgent <- r.Header.Get("User-Agent")
+		fixture.upstreamCHUA <- r.Header.Get("Sec-CH-UA")
 		switch r.URL.Path {
 		case "/login":
 			w.Header().Set("Content-Type", "text/html")
@@ -507,6 +513,8 @@ func TestHostedGatewayRewritesValidatedBrowserHeaders(t *testing.T) {
 	req, _ := http.NewRequest(http.MethodPost, fixture.server.URL+"/submit", strings.NewReader("email=private@example.com"))
 	req.Header.Set("Origin", fixture.server.URL)
 	req.Header.Set("Referer", fixture.server.URL+"/login")
+	req.Header.Set("User-Agent", "Mozilla/5.0 HeadlessChrome/140.0.0.0 Safari/537.36")
+	req.Header.Set("Sec-CH-UA", `"Chromium";v="140", "HeadlessChrome";v="140"`)
 	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -520,6 +528,12 @@ func TestHostedGatewayRewritesValidatedBrowserHeaders(t *testing.T) {
 	}
 	if upstreamCookie := <-fixture.upstreamCookie; strings.Contains(upstreamCookie, hostedAttemptCookie) {
 		t.Fatal("gateway capability leaked in proxied cookie header")
+	}
+	if userAgent := <-fixture.upstreamAgent; strings.Contains(userAgent, "HeadlessChrome") || !strings.Contains(userAgent, "Chrome/140") {
+		t.Fatalf("automation marker was not normalized in user agent: %q", userAgent)
+	}
+	if clientHints := <-fixture.upstreamCHUA; strings.Contains(clientHints, "HeadlessChrome") || !strings.Contains(clientHints, "Google Chrome") {
+		t.Fatalf("automation marker was not normalized in client hints: %q", clientHints)
 	}
 }
 

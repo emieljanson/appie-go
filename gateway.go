@@ -383,6 +383,7 @@ func (g *HostedLoginGateway) handleProxy(w http.ResponseWriter, r *http.Request)
 	upstream.Host = g.loginTarget.Host
 	upstream.Header = r.Header.Clone()
 	upstream.Header.Del("Accept-Encoding")
+	normalizeHostedBrowserHeaders(upstream.Header)
 	removeCookie(upstream, hostedAttemptCookie)
 	if upstream.Header.Get("Origin") == g.publicOrigin.String() {
 		upstream.Header.Set("Origin", strings.TrimRight(g.loginTarget.String(), "/"))
@@ -434,6 +435,17 @@ func (g *HostedLoginGateway) handleProxy(w http.ResponseWriter, r *http.Request)
 		if _, err := w.Write(body); err != nil {
 			g.logger.Printf("gateway proxy result=response_copy_failed error=%q", err.Error())
 		}
+	}
+}
+
+func normalizeHostedBrowserHeaders(header http.Header) {
+	userAgent := header.Get("User-Agent")
+	if strings.Contains(userAgent, "HeadlessChrome/") {
+		header.Set("User-Agent", strings.ReplaceAll(userAgent, "HeadlessChrome/", "Chrome/"))
+	}
+	clientHints := header.Get("Sec-CH-UA")
+	if strings.Contains(clientHints, "HeadlessChrome") {
+		header.Set("Sec-CH-UA", strings.ReplaceAll(clientHints, "HeadlessChrome", "Google Chrome"))
 	}
 }
 
